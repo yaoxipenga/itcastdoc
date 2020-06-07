@@ -1,0 +1,41 @@
+ 1 ---
+  2  - hosts: 192.168.127.28
+  3    remote_user: root
+  4    tasks:
+  5    - name: 同步需要的yum源
+  6      copy: src=/etc/yum.repos.d/ dest=/etc/yum.repos.d/
+  7
+  8    - name: 安装软件
+  9      yum: name=zabbix-server-mysql,zabbix-web-mysql,mariadb-server
+ 10
+ 11    - name: 启动mysql服务
+ 12      service: name=mariadb state=restarted enabled=yes
+ 13
+ 14    - name: 删除脚本
+ 15      shell: rm -rf /create.sh
+ 16
+ 17 #   - name: 删原来的库   （这有问题，要是第一次，就会报错，因为没有库删，）
+ 18 #     script: /drop.sh        （怎么避免这问题）
+ 19
+ 20
+ 21    - name: 执行脚本创建库
+ 22      script: /create.sh
+ 23
+ 24
+ 25    - name: 导入数据
+ 26      shell:  zcat /usr/share/doc/zabbix-server-mysql-4.4.5/create.sq    l.gz |mysql -u zabbix -p123 zabbix
+ 27
+ 28    - name: 同步配置文件
+ 29      copy: src=/etc/zabbix/zabbix_server.conf dest=/etc/zabbix/zabbi    x_server.conf
+ 30
+ 31    - name: 重启zabbix
+ 32      service: name=zabbix-server state=restarted
+ 33
+ 34    - name: 同步http配置文件
+
+ 35      copy: src=/etc/httpd/conf.d/zabbix.conf dest=/etc/httpd/conf.d/    zabbix.conf
+ 36
+ 37
+ 38    - name: 重启httpd
+ 39      service: name=httpd state=restarted
+

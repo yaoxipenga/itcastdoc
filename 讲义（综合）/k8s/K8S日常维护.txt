@@ -1,0 +1,18 @@
+1:针对集群
+集群维护：
+a>集群监控（资源整体监控、各节点监控、对某些服务可用性监控）
+b>node节点的上下架
+C>yaml文件---针对业务去编辑或者更近迭代yaml(pod部署的、持久化存储、命名空间的、RBAC权限、service...)
+D>镜像打包，业务上线（k8s-cicd）
+1：创建jenkins-pipline-job
+2: 指定仓库
+3：指定拉取授权
+4：触发（人为触发、钩子）
+5：pipline---stage
+   a>指定机器-拉取代码
+   b>事先写好dockerfile-->打包镜像（定义tag 当前时间）
+   c> 推送镜像到harbor
+   d>制定k8s-master -->脚本更改项目部署yaml中的镜像标签
+   e>部署"kubectl apply -f k8s1.yaml"
+   
+    

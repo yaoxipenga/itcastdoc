@@ -1,0 +1,834 @@
+--
+
+devops
+自动化运维  (cobbler,shell,puppet,ansible,saltstack,python自开发等)
+
+
+
+puppet
+
+
+
+
+
+假设管理10000台服务器，现在我要去这10000台上都执行一个事情(比如创建文件，修改文件，安装软件，启动服务，创建用户等等)，怎么做?
+1,一个个的ssh连上去，手动操作
+2,shell脚本做
+但有两个主要的问题:
+a,)密码的问题
+	解决方法: ssh-keygen 空密钥
+		 expect 自动应答密码
+
+
+b,)循环的效率问题:
+10000台服务器，假设每台服务器要做的事情需要10秒，则一共就得要100000秒了
+	解决方法: shell并发执行
+
+#!/bin/bash
+
+for i in `seq 10`
+do
+	echo $i
+	sleep 1
+done &			--这里不加后台符号和加后台符号效果不一样，测试一下就知道了
+
+
+for j in `seq 11 20`
+do
+	echo $j
+	sleep 1
+done
+
+
+3,自动化（集中化）配置管理工具
+使用这类的软件需要注意以下几个问题:
+1,大并发        解决:MQ消息队列
+2,管理的机器操作系统或版本可能不一样	解决:一般都会有一种方法得到客户端的信息
+if centos;then
+	xxxx
+elif  rhel;then
+	xxxx
+elif  suse;then
+	xxxx
+else
+	xxxx
+fi
+3,异常处理（日志，报告等）
+4,分组机制
+5,web管理界面 dashboard
+6,操作语言
+
+
+
+
+puppet
+
+
+				master   touch /tmp/123
+					 rpm -ivh xxxx 
+					 yum install xxxx
+
+
+
+		server1	server2	server3	server4 ........   (agent)
+	
+
+
+
+
+
+puppet 
+如果你管理的多台机器（可能操作系统不一样，或者版本不一样),puppet会有一个叫facter的包可以帮助判断管理机器的系统和版本。然后管理员在管理端写上类似下面的语法就可以实现差异化管理了
+
+
+
+===========================================================================================================
+
+
+
+
+			   master
+
+
+	
+		agent1			 agent2
+
+
+
+安装前准备:一个server，两个client(centos7.3平台)
+1,主机名配置和主机名互相绑定
+# hostnamectl set-hostname --static master.cluster.com
+
+# vim /etc/hosts
+10.1.1.2	master.cluster.com	
+10.1.1.3	agent1.cluster.com	
+10.1.1.4	agent2.cluster.com
+2，时间同步
+3，静态IP
+4,关闭firwalld,selinux
+5,配置yum源   (本地iso源,163源,epel源，还要加上下面的官方源)
+
+方法一:直接找公网的yum源
+# vim  /etc/yum.repos.d/puppet.repo 
+[puppet]
+name=puppet
+baseurl=http://yum.puppetlabs.com/el/7Server/products/x86_64/
+enabled=1
+gpgcheck=0
+[puppet-dependencies]
+name=puppet-dependencies
+baseurl=http://yum.puppetlabs.com/el/7Server/dependencies/x86_64/
+enabled=1
+gpgcheck=0
+
+方法二:找我的教学机器（下载到了本地)
+
+下面一个仓库里的包就是包含了上面的两个仓库（我把两个仓库的包合到了一个仓库里)
+# vim  /etc/yum.repos.d/puppet.repo 
+
+[puppet]
+name=puppet
+baseurl=http://10.1.1.1/puppet
+enabled=1
+gpgcheck=0
+
+
+第一步:安装puppet
+在master上操作  
+# yum install puppet-server
+# systemctl start puppetmaster
+# systemctl enable puppetmaster
+# systemctl status puppetmaster
+
+
+# lsof -i:8140
+
+
+
+在所有的agent上操作     
+# yum install puppet
+# systemctl start puppet
+# systemctl enable puppet
+# systemctl status puppet
+
+
+# systemctl start puppetagent
+# systemctl enable puppetagent
+# systemctl status puppetagent
+
+
+
+
+第二步：
+master与所有agent建立连接
+
+1,在所有的agent客户端配置
+# vim /etc/puppet/puppet.conf   --在[main]配置段加上下面一句
+	server = master.cluster.com   --这是puppet服务器的主机名（别名会有问题，最好不用别名;必须绑定才能解析）
+
+
+发送验证请求给服务端
+# puppet agent --server=master.cluster.com --test	  	--会产生创建ssl证书的信息
+
+# ls /var/lib/puppet/ssl/certs/		--此目录会产生ca.pem文件
+ca.pem			
+
+
+
+2,在服务端(master)上操作
+
+列出验证请求
+# puppet cert list
+  "agent1.cluster.com" (SHA256) 0D:FE:23:A0:BA:DC:59:74:95:A3:DD:0D:15:C3:68:1D:EC:9C:94:C5:49:9F:65:65:9A:1A:DB:EB:B4:C3:05:DD
+  "agent2.cluster.com" (SHA256) 36:A4:39:46:9D:09:BF:E7:96:D4:AE:A3:51:3B:C0:07:1A:E9:A1:A1:58:FB:DE:2F:28:09:1A:CD:9E:96:3B:1C
+
+进行证书签名
+# puppet cert --sign --all      --对所有请求进行签名
+
+
+3,再回到agent客户端操作（所有agent客户端都需要操作)
+
+# puppet agent --server=master.cluster.com --test	 --再次验证请求
+
+
+# ls /var/lib/puppet/ssl/certs/目录，又多了名为"主机名.pem"文件(如agent1.cluster.com上看到的是叫agent1.cluster.com.pem)
+
+
+=======================================================
+如果建立连接有问题,需要重新建立连接，尝试下面的方法:
+
+1,在master上操作:
+# puppet cert clean agent1.cluster.com
+# puppet cert clean agent2.cluster.com
+
+2,在agent上操作:
+# rm /var/lib/puppet/ssl/certs/* -rf
+
+3,解决问题再重新做上面第二步的所有步骤
+
+=======================================================
+
+
+第三步:
+
+测试
+
+1.服务端配置：
+# vim /etc/puppet/manifests/site.pp  --此文件修改之后立即生效，无需重启master服务
+node default {				--default节点，代表默认所有节点
+  file { "/tmp/test.txt": 		--资源title,如果没有使用path参数，就默认使用这个为文件路径
+          content=> "hello,world\n", 	--指定文件内容，所以此文件不存在的话，也会帮你创建
+	}
+}
+
+2.客户端查看是否成功创建文件
+由于puppet Agent端默认30分钟跟Master端进行同步配置文件，所以此处进行手动重启，查看是否成功
+如果需要修改同步时间，在客户端的/etc/puppet/puppet.conf 的[agent]下加入runinterval = 3  ，表示3秒后同步
+
+# systemctl restart puppet
+# systemctl restart puppetagent 
+
+然后在agent上测试文件是否成功创建  
+# cat /tmp/test.txt 
+hello, world
+
+
+
+============================================================
+
+如果同步推送有问题，在agent端使用下面的命令手动同步一下，会有相关的报错
+# puppet agent --test --server master.cluster.com 
+
+
+Notice: Run of Puppet configuration client already in progress; skipping  (/var/lib/puppet/state/agent_catalog_run.lock exists)
+如果有上面相关的错误，解决方法：
+# rm -rf /var/lib/puppet/state/agent_catalog_run.lock
+# systemctl stop puppet
+# systemctl stop puppetagent
+# puppet agent --test --server master.cluster.com
+这里会报红色的错误提示，按照提示去排错
+
+排错完就再启动服务
+# systemctl start puppet
+# systemctl start puppetagent
+
+============================================================
+
+
+其它配置实例（参考语法文档路径为:http://docs.puppetlabs.com/references/latest/type.html)
+
+
+
+
+例1,为不同节点创建不同内容的不同文件
+node 'agent1.cluster.com' {	--只针对agent1.cluster.com节点，需要单引号引起来
+        file { "/tmp/test.txt":
+                content=> "hahahaha\n",
+	}
+}
+node 'agent2.cluster.com' {	--只针对agent2.cluster.com节点，需要单引号引起来	
+        file { "/tmp/test.txt":
+                content=> "hehehehe\n",
+	}
+}
+
+
+
+例2，为不同节点删除无用的文件
+node 'agent1.cluster.com' {
+	file { "/tmp/test.txt":
+		ensure=> absent,	--表示保证此文件不存在，如果存在，则删除(如果是删除一个目录，还要加一个force=> yes,才可以成功)
+	}
+}
+node 'agent2.cluster.com' {
+	file { "/tmp/test.txt":
+		ensure=> absent,
+	}
+}
+
+
+
+
+例3，使用正则表达式为有相似名字的主机统一做一个软链接（目前版本不支持通配符，只支持正则表达式）
+node /^agent\d+\.cluster\.com/ {	--代表agentX.cluster.com的所有节点（X代表任意数字）;你也可以把前面的正则换成简单点如 /^agent/或/cluster\.com$/
+        file { "/tmp/fstab":
+                ensure => link,		--做软链接
+                target => "/etc/fstab",	--软链接的源文件为/etc/fstab	
+        }
+}
+
+
+
+
+例4，创建目录，并在目录内创建文件,并指定权限，owner,group等属性
+node /\.cluster\.com$/ {
+        file { "/test/":
+                ensure => directory,
+        }
+        file { "/test/abc":
+                content => "haha\n",
+                mode => 4755,
+                owner => bin,
+                group => daemon,
+        }
+}
+
+
+
+
+例5,在例4的基础上，把/test/abc的文件内容改成客户端的/etc/fstab的文件内容
+node /^agent\d+\.cluster\.com/ {
+        file { "/test/":
+                ensure => directory,
+        }
+        file { "/test/abc":
+		source => "/etc/fstab",		--这里content改成了source文件的内容,会overwrite原来的内容(可以看作是cp /etc/fstab /test/abc)
+                mode => 4755,
+                owner => bin,
+                group => daemon,
+        }
+
+}
+
+
+
+
+例6，创建user1用户(属性默认，就相当于在直接在agent客户机上useradd user1)
+node /^agent\d+\.cluster\.com/ {
+        user { "user2":
+                ensure => present,
+		managehome => true,	--表示会创建家目录
+        }
+}
+
+
+
+
+例7,删除user2用户，增加user3用户,增加group1组
+node /^agent\d+\.cluster\.com/ {
+        user { "user2":
+                ensure => absent,
+		managehome => true,	--表示删除用户时会删除家目录
+        }
+        user { "user3":
+                ensure => present,
+                uid => 505,		--指定uid=505，这里不要写gid=505，因为如果不存在505这个组，就会出问题
+                shell => "/sbin/nologin",
+        }
+	group  { "group1":	
+                ensure => present,
+                gid => 520,
+        }
+
+}
+
+
+
+
+例8,为客户端做crontab定时任务（客户端使用对应的用户crontab -l去验证）
+node /^agent\d+\.cluster\.com/ {
+        cron { "cron1":		--一个注释的名称
+                command => "/sbin/init 0",	--时间任务要做的命令
+                user => "root",			--什么用户身份
+                minute => "01",			
+                hour => "21",			--这是表示21点01分，其它的不写都会默认以*代替
+        }	
+}
+
+
+
+例9:对客户端服务状态进行控制
+node /^agent\d+\.cluster\.com/ {
+	service { sshd:
+		ensure => "stopped",	--确认sshd服务要为关闭状态，启动了会帮你关闭
+		enable => false,	--相当于做成systemctl disable sshd
+	}
+	service { httpd:
+		ensure => "running",	--确认httpd服务为开启状态，关闭了会帮你启动		
+		enable => true,		--相当于做成systemctl enable httpd
+	}
+}
+
+
+
+例10：创建一个简单的脚本，并使用exec资源来执行它
+
+node /^agent\d+\.cluster\.com/ {
+        file { "/shell/":
+                ensure => directory,
+        }
+        file { "/shell/1.sh":
+		content => "mkdir -p /test\ntouch /test/{1..100}\n",
+                mode => 755,
+                owner => root,
+                group => root,
+        }
+	exec { "exec-shell":
+	cwd => "/shell",		--指定在哪个目录执行这个脚本
+	command => "sh 1.sh",		--因为上一条指定了在/shell目录，所以这里用相对路径
+	user => "root",			--执行这个脚本的身份
+	path => "/bin:/sbin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin",			--执行这个脚本时的命令（如sh)的路径
+	}
+}
+
+
+
+例11：简单的推送yum配置文件，然后安装vsftpd软件包
+
+
+node /^agent\d+\.cluster\.com/ {
+        file { "/etc/yum.repos.d/rhel-source.repo":
+                content => "[server]\nname=server\nbaseurl=file:///yum\nenabled=1\ngpgcheck=0\n",
+                mode => 644,
+                owner => root,
+                group => root,
+        }
+        package { 'install vsftpd':
+        provider => yum,
+        name => vsftpd,
+        ensure => installed,
+        }
+}
+
+
+
+例12:指定一个块设备挂载到一个目录
+
+node default{
+        mount { "/mnt":		--title，没有name参数则就代表挂载点
+                ensure=> mounted,	--mounted表示此挂载不仅加到/etc/fstab，还会帮你挂载上去（还有present,unmounted,absent相关参数，自行参考文档）
+                device=> "UUID=3f1de712-7864-47ea-b0b4-9fa5781b2e88",	--挂载设备的UUID，也可以直接写/dev/sdax
+        }
+}
+
+
+例13:修改/etc/hosts里其中一条记录（主机名不变,修改绑定的IP或别名）
+
+node default{
+        host { "agent1.cluster.com":	--针对所有agent里的/etc/hosts文件里绑定的agent1.cluster.com来进行修改
+                ip=> "10.1.1.4",	--将其IP改为10.1.1.4（原来是10.1.1.4则保持不变)	
+                host_aliases=> "agent2haha",	--将其别名改为agent2haha(原来是agent2haha则保持不变)
+        }
+}
+
+
+
+例14:从配置yum，安装包，修改配置文件(要求拒绝匿名用户登录，所有普通用户支持chroot)，启动服务并实现vsftpd服务开机自动启动
+
+
+node /^agent\d+\.cluster\.com/ {
+        file { "/etc/yum.repos.d/abc.repo":
+                content => "[server]\nname=server\nbaseurl=file:///yum\nenabled=1\ngpgcheck=0\n",
+                mode => 644,
+                owner => root,
+                group => root,
+        }
+        package { 'install vsftpd':
+        	provider => yum,
+        	name => vsftpd,
+        	ensure => installed,
+        }
+	file { "/tmp/1.sh":
+		content => "sed -i '/^anonymous_enable/s/YES/NO/' /etc/vsftpd/vsftpd.conf\nsed -i '/chroot_local_user=YES/s/#//' /etc/vsftpd/vsftpd.conf\n",
+	}
+	exec { "exec-shell":
+		cwd => "/tmp",
+		command => "sh 1.sh; rm -rf 1.sh",
+		user => "root",
+		path => "/bin:/sbin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin",
+	}
+	service { vsftpd:
+		ensure => true,
+		enable => true,
+	}
+}
+
+
+
+
+例15:用模块来实现/etc/sudoers文件的推送
+
+
+第一步:
+在master建立模块相应的结构目录
+# mkdir -p /etc/puppet/modules/sudo/{files,templates,manifests}
+			      
+
+第二步:
+在master上指定存放模块的路径
+# vim /etc/puppet/puppet.conf 	--在[main]配置段下增加下面一句，指定模块的目录路径
+
+modulepath = /etc/puppet/modules
+
+
+第三步：
+在master上指定相关的目录能被客户端访问的权限
+# vim /etc/puppet/fileserver.conf
+
+
+[sudo]
+path /etc/puppet/modules/sudo
+allow *
+
+
+
+第四步：
+在master上配置site.pp文件（指定要找的客户端资源）
+# vim /etc/puppet/manifests/site.pp	--指定导入nodes.pp文件，并指定$puppetserver变量的值为服务端的域名
+
+import 'nodes.pp'
+
+$puppetserver="master.cluster.com"
+
+
+第五步：
+在master上配置与site.pp同目录下的nodes.pp文件（大量节点时，可以按正则表达式配置所有的节点在这里，然后可以被site.pp调用）
+# vim /etc/puppet/manifests/nodes.pp
+
+node /\.cluster\.com$/ {
+	include sudo			--这里表示.cluster.com$的所有节点要做的事情为sudo，它会调用下面配置的叫sudo的类
+}
+
+
+
+第六步：
+在master上配置sudo模块的核心文件init.pp，指定要做的事情
+--下面配置里的$operatingsystem变量的值会由facter返回
+# vim /etc/puppet/modules/sudo/manifests/init.pp
+class sudo{
+    package{ sudo:
+	provider => yum,
+        name => sudo,
+        ensure=> present,
+	}
+
+        if $operatingsystem in [ "RedHat","CentOS","Fedora" ] {
+                file { "/etc/sudoers":
+                owner => "root",
+                group => "root",
+                mode => 0440,
+                source => "puppet://$puppetserver/sudo/files/etc/sudoers",
+		require => package["sudo"],
+                }
+        } else {
+                fail("Doesn't support this OS: $operatingsystem")
+        }
+}
+
+
+
+
+第七步：
+在master上准备好将要发送到所有agent客户端上的真实资源，建立与上面配置对应的目录，并修改你要发送的内容和修改相应的权限
+# mkdir -p /etc/puppet/modules/sudo/files/etc
+# cp /etc/sudoers /etc/puppet/modules/sudo/files/etc/sudoers	--将这个拷后的文件做一定的修改，修改的内容就是你要推送到所有agent上的内容
+# chown -R puppet /etc/puppet/modules/
+
+
+
+第8步：
+客户端验证
+# puppet agent --test --server master.cluster.com --no-daemonize --verbose
+
+或者直接去
+cat /etc/sudoers  查看是否有你在服务端修改的内容
+
+
+
+======================================================================================
+
+练习:
+按照上面的例15的方式做成一个模块，实现在所有的puppet的agent节点上实现：
+1，配置yum
+2，安装httpd*
+3, 修改httpd的家目录为/web,并在每一个家目录里产生主页index.html文件，里面的内容写上web$IP主页（$IP为agent节点的IP的最后一个数字）
+4, 把httpd的配置文件做成会跟着puppet服务器改变（类似例15)
+5，服务启动，并开机自动启动
+
+
+答案：
+1，# mkdir -p /etc/puppet/modules/httpd/{files,templates,manifests}
+
+2,# vim /etc/puppet/manifests/site.pp
+import 'nodes.pp'
+$puppetserver="puppetmaster.cluster.com"
+
+3,# vim /etc/puppet/manifests/nodes.pp
+node /\.cluster\.com$/ {
+	include sudo
+	include httpd
+}
+
+4,# vim /etc/puppet/modules/httpd/manifests/init.pp
+class httpd {
+        file { "/etc/yum.repos.d/rhel-source.repo":
+                content => "[server]\nname=server\nbaseurl=file:///yum\nenabled=1\ngpgcheck=0\n",
+                mode => 644,
+                owner => root,
+                group => root,
+        }
+	package { 'install httpd':
+        provider => yum,
+        name => httpd,
+        ensure => installed,
+        }
+	package { 'install httpd-devel':
+        provider => yum,
+        name => httpd-devel,
+        ensure => installed,
+        }
+	file { "/web":
+                ensure => directory,
+        }
+	file { "/tmp/1.sh":
+		content => "#!/bin/bash\nip=`ifconfig eth0 | grep broadcast |awk '{print \$2}' |awk -F. '{print \$4}'`\necho web\$ip > /web/index.html\nsed -i '119,131s/\/var\/www\/html/\/web/' /etc/httpd/conf/httpd.conf\n",
+                mode => 755,
+                owner => root,
+                group => root,
+        }
+	exec { "exec-shell":
+	cwd => "/tmp",
+	command => "sh 1.sh",
+	user => "root",
+	path => "/bin:/sbin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin",
+	}
+        if $operatingsystem in [ "RedHat","CentOS","Fedora" ] {
+                file { "/etc/httpd/conf/httpd.conf":
+                owner => "root",
+                group => "root",
+                mode => 0440,
+                source => "puppet://$puppetserver/httpd/files/etc/httpd.conf",
+		require => package["httpd"],
+                }
+        } else {
+                fail("Doesn't support this OS: $operatingsystem")
+        }
+	service { httpd:
+		ensure => "running",
+		enable => true,
+	}
+}
+
+
+
+5,# vim /etc/puppet/puppet.conf
+modulepath = /etc/puppet/modules
+
+
+6,# vim /etc/puppet/fileserver.conf
+[sudo]
+path /etc/puppet/modules/sudo
+allow *
+[httpd]
+path /etc/puppet/modules/httpd
+allow *
+
+7,# mkdir -p /etc/puppet/modules/httpd/files/etc
+# cp /etc/httpd/conf/httpd.conf /etc/puppet/modules/httpd/files/etc/httpd.conf   --拷过来后，把家目录改为/web
+# chown -R puppet /etc/puppet/modules/
+# systemctl restart puppetmaster
+
+
+
+
+
+
+
+
+==========================================================================================================================
+
+
+puppet还有一些相关插件，可以课后自己去查找资源测试实现
+如
+1， web报告查看
+2,  activeMQ/RabbitMQ+mcollective实现队列高效推送
+3,  web管理工具puppet-dashboard和forman
+
+参考网址:http://www.kisspuppet.com/
+
+
+
+扩展: puppet-dashboard图形查看报告的一个简易配置(以下文档在rhel6.5上测试成功，未在centos7.3上测试)
+第一步:
+在puppetmaster上安装相关软件包
+# yum install puppet-dashboard ruby-mysql mysql-server
+
+
+第二步:
+启动mysql数据库，建立相关的库，并授权
+# /etc/init.d/mysqld restart
+# mysql
+mysql> create database dashboard character set utf8;
+mysql> grant all on dashboard.* to 'dashboard'@'localhost' identified by '123';
+mysql> flush privileges;
+mysql> quit
+
+第三步:配置连接mysql的用户名，密码等
+# vim /usr/share/puppet-dashboard/config/database.yml
+production:
+  database: dashboard
+  username: dashboard
+  password: 123
+  encoding: utf8
+  adapter: mysql
+
+
+第四步
+导入mysql数据
+# cd /usr/share/puppet-dashboard/
+# rake gems:refresh_specs
+# rake RAILS_ENV=production db:migrate
+
+
+# mysql
+mysql> use dashboard;
+mysql> show tables;	--验证导入了18张表
+
+
+
+第五步
+使用passenger方式运行dashboard,此方式效率高，但安装麻烦（需要使用gem安装ruby相关软件包),过程如下
+
+
+# yum install ruby-devel ruby-libs rubygems libcurl-devel httpd* mod_ssl -y		--先用yum安装相关依赖包
+
+
+下面使用gem命令安装ruby相关的gem包，软件包路径在(笔记目录/puppet_gem_soft下）
+# ls 笔记目录下/arch/puppet_gem_soft
+daemon_controller-1.1.7.gem  rack-1.5.2.gem
+passenger-4.0.30.gem         rake-10.0.1.gem
+
+把这四个包拷到puppetmaster服务器上，然后cd到拷贝的目录
+
+# gem list --local	--查看使用gem已经安装的包
+
+*** LOCAL GEMS ***
+
+json (1.5.5)
+
+# gem install --local passenger-4.0.30.gem	--使用gem安装本地的passenger软件包，会自动解决依赖性（要上面的四个包都在当前目录)
+
+
+# gem list --local	--安装完后的效果
+
+*** LOCAL GEMS ***
+
+daemon_controller (1.1.7)
+json (1.5.5)
+passenger (4.0.30)
+rack (1.5.2)
+rake (10.0.1)
+
+
+# passenger-install-apache2-module --安装完passenger后，使用此命令安装/mod_passenger.so模块
+
+
+
+# ls  /usr/lib/ruby/gems/1.8/gems/passenger-4.0.30/buildout/apache2/mod_passenger.so	--确认产生此模块
+
+
+第六步:
+配置虚拟主机配置文件
+# vim /etc/httpd/conf.d/passenger.conf		--新建此子配置文件，并复制粘贴下面一段
+LoadModule passenger_module /usr/lib/ruby/gems/1.8/gems/passenger-4.0.30/buildout/apache2/mod_passenger.so
+<IfModule mod_passenger.c>
+   PassengerRoot /usr/lib/ruby/gems/1.8/gems/passenger-4.0.30
+   PassengerRuby /usr/bin/ruby
+   PassengerHighPerformance on
+   PassengerMaxPoolSize 12
+   PassengerPoolIdleTime 1500
+   PassengerStatThrottleRate 120
+ # RailsAutoDetect On
+</IfModule>
+Listen 8141
+<VirtualHost *:8141>
+        DocumentRoot "/usr/share/puppet-dashboard/public/"
+        <Directory "/usr/share/puppet-dashboard/public/">
+                Options None
+                AllowOverride AuthConfig
+                Order allow,deny
+                allow from all
+        </Directory>
+        ErrorLog /var/log/httpd/dashboard.error.log
+        LogLevel warn
+        CustomLog /var/log/httpd/dashboard.access.log combined
+</VirtualHost>
+
+
+
+第七步:
+启动服务
+# /etc/rc.d/init.d/puppetmaster restart
+# /etc/rc.d/init.d/httpd restart
+
+第8步
+使用firefox访问
+http://172.16.21.12:8141/	--但现在并没有看到相关信息
+
+
+第九步：
+配置agent自动发送报告给puppetmaster
+#vim /etc/puppet/puppet.conf	--在puppetmaster上打开此配置文件，并在[main]配置段下加这两句
+reports = http
+reporturl = http://172.16.21.12:8141/reports
+
+
+第十步：
+开启后台处理报告进程
+# cd /usr/share/puppet-dashboard/
+# rake RAILS_ENV=production jobs:work &
+
+然后使用firefox去访问http://172.16.21.12:8141/，可以看到相关报告信息了，但时间不对（默认用的是UTC，需要改成CST)
+
+
+
+
+第十一步：修改dashboard时区
+# vim /usr/share/puppet-dashboard/config/settings.yml
+time_zone: 'Asia/Shanghai'
+
+# /etc/init.d/httpd   restart   --重启服务使之生效
+
+再使用firefox去访问http://172.16.21.12:8141/，这次时间就OK了
+
+===============================================================================================

@@ -1,0 +1,954 @@
+--
+
+网络基础
+
+交换机		不能跨网络,不隔离广播
+路由器		可以跨网络,可以隔离广播
+网关		网关不象交换机和路由器，它不是一个设备，它可以是任何人，任何一个ip.它是默认路由.
+
+
+
+网络基本拓朴图(星型）
+
+
+
+			PC1		   PC2	
+			   \		 /	
+			    \	        /	
+			     \	       /				
+			        交换机
+			       /      \
+			      /	       \
+			     /		\	
+			PC3		 PC4
+
+
+
+虚拟机使用vmnet1这个host-only类型的网络
+
+			宿主机vmnet1网卡		虚拟机的网卡eth0	
+			　　　  \			/
+			      \		       /	
+			       \	      /
+			        vmnet1交换机
+
+
+
+
+
+
+			宿主机virbr0网卡		虚拟机的网卡eth0	
+			　　　  \			/
+			      \		       /	
+			       \	      /
+				default网络交换机
+
+
+
+
+问题:在一个交换机上的两台机器网卡如何通迅?
+答案:配置同网段的不同ip，就可以直接通迅了
+
+
+问题:怎么判断两个ip是不是同网段?
+答案:根据netmask子网掩码来判断
+
+
+
+====================================================================
+
+
+
+			      家用网络拓朴图
+
+				internet
+				   |
+				   |
+				  家里的接口
+				   |
+				   |		
+				 modem 调制解调器 (转信号)
+				   |
+				   |
+				　路由器（拔号,dhcp，nat共享上网，网络控制等)	
+				   |
+				   |
+			|－－－－－－－－－－－－－｜
+		      交换机			交换机
+			|			|
+		|-------------|		|-------------|
+		pc1	     pc2	pc3	     pc4
+
+
+
+
+
+
+===================================================================================
+
+
+10.1.1.9/255.255.255.0  和   10.1.1.9/24  是一样的
+
+
+ipv4是四个8位二进制组成 
+
+如10的8位二进制应该表示为:
+00001010
+
+128 64 32 16 8 4 2 1
+
+
+255.255.255.0表示前面24位全为1，也就是说ipv4前24位为网络号，后8位为主机号
+
+10.1.1.9/255.255.255.0  
+
+			   |	
+00001010.00000001.00000001.| 00001001	IP
+			   |	
+11111111.11111111.11111111.| 00000000	NETMASK
+			   |	
+
+
+问题:
+10.1.1.9/25和10.1.1.10/25这两个ip在同一个交换机上，能否直接通迅?
+                             |
+00001010.00000001.00000001.0 | 0001001	IP
+			     |	
+11111111.11111111.11111111.1 | 0000000	NETMASK
+			     |	
+
+                             |
+00001010.00000001.00000001.0 | 0001010	IP
+			     |	
+11111111.11111111.11111111.1 | 0000000	NETMASK
+
+从上面的图看到，这两个ip前25位完全一样，所以可以直接通迅.
+
+
+问题:
+10.1.1.130/25和10.1.1.125/25这两个ip在同一个交换机上，能否直接通迅?
+
+                             |
+
+00001010.00000001.00000001.1 | 0000010	IP
+			     |	
+11111111.11111111.11111111.1 | 0000000	NETMASK
+			     |	
+
+
+                             |
+00001010.00000001.00000001.0 | 1111101	IP
+			     |	
+11111111.11111111.11111111.1 | 0000000	NETMASK
+			     |	
+从上面的图看到，这两个ip前25位不一样，所以不可以直接通迅.
+
+
+问题:
+10.1.1.9/24和10.1.1.10/8这两个ip在同一个交换机上，能否直接通迅?
+
+
+可以通迅；但尽量避免这样做
+
+
+=====================================================================
+
+
+IPV4里常见保留的IP段（不能直接在公网上使用的):
+0.0.0.0		--代表所有网段
+127.x.x.x	--本地环回，用于tcp/ip协议测试
+
+常用私有ip段
+10.x.x.x
+192.168.x.x
+172.16.x.x-172.31.x.x
+
+为什么保留一些ip段?
+答案:因为ipv4不够用.所以保留一些ip段供私网使用.
+
+
+在内网内能否使用公网ip?
+答案:在不与公网冲突的情况下，做实验想怎么用就怎么用.但涉及到上网的网段时，有冲突就最好不要用.
+
+
+
+
+IPV4的分类:
+A类:(默认掩码为8位)
+32位二进制里第一位为0的属于Ａ类
+范围为:
+00000000.00000000.00000000.00000000 －－ 01111111.11111111.11111111.11111111
+换算成十进制为:
+0.0.0.0 到 127.255.255.255(这里没有去掉保留的ip段)
+
+
+B类:(默认掩码为16位)
+32位二进制里以10开头的的属于Ｂ类
+范围为:
+10000000.00000000.00000000.00000000 －－ 10111111.11111111.11111111.11111111
+换算成十进制为:
+128.0.0.0 到 191.255.255.255
+
+
+c类:(默认掩码为24位)
+32位二进制里以110的属于C类
+范围为:
+11000000.00000000.00000000.00000000 －－ 11011111.11111111.11111111.11111111
+换算成十进制为:
+192.0.0.0 到 223.255.255.255
+
+
+
+D类:(组播地址段)
+32位二进制里以1110的属于D类
+范围为:
+11100000.00000000.00000000.00000000 －－ 11101111.11111111.11111111.11111111
+换算成十进制为:
+224.0.0.0 到 239.255.255.255
+
+
+E类:
+保留扩展使用的ip段
+
+
+广播(broadcast):广播发信息，网络内所有人都能收到（路由器隔离广播)
+组播(multicast):组播发信息，网络内相同组播地址的人能收到（用于一些特殊场景）
+点播(unicast):点对点
+
+
+===============================================================
+
+
+
+子网划分:
+
+我们可以把一个网段划分成多个子网
+
+
+10.0.0.0/8这个网段前8位是网络号，后24位是主机号，那么它容纳多少个主机呢?
+答案为:2^24-2个主机（减2的原因是去掉主机号全为0和全为1的两个情况,因为主机号全为0的是网络号，全为１的是广播地址)
+这里我的网络号就是10.0.0.0，广播地址为10.255.255.255，能使用的ip范围是10.0.0.1到10.255.255.254
+
+
+题目1:
+请问192.168.1.0/26这样划分了几个子网？   2**(26-24)=4个子网
+每个子网容纳多少个ip?		     2**(32-26)-2=62个		
+每个子网的网络号是多少？		     
+广播地址是多少？
+使用的ip范围是多少?
+
+网络号			 广播地址		范围
+192.168.1.0		192.168.1.63		1-62		
+192.168.1.64		192.168.1.127		65-126
+192.168.1.128		192.168.1.191		129-190
+192.168.1.192		192.168.1.255		193-254
+
+
+
+题目2:
+172.16.0.0/19
+
+2**(19-16)=8个网络
+每个网络2**(32-19)-2个ip
+
+网络号			广播地址	　　　		ip范围
+172.16.0.0	     172.16.31.255	172.16.0.1-172.16.31.254		
+172.16.32.0	　　　  172.16.63.255　	172.16.32.1-172.16.63.254 
+172.16.64.0
+172.16.96.0
+172.16.128.0
+172.16.160.0
+172.16.192.0
+172.16.224.0
+
+题目3:
+10.0.0.0/19
+
+2个网络
+
+网络号			广播地址	　　　		ip范围
+10.0.0.0		10.127.255.255		10.0.0.1-10.127.255.254
+10.128.0.0		10.255.255.255		10.128.0.1-10.255.255.254
+
+
+
+
+题目4:
+一个小公司，有管理人员3人，销售人员10人，技术人员35人,行政和后勤8人，客服人员20人.一共5个部门，现在你做为公司网络管理人员，接到的需求是把5个部门做成5个网段,请问使用192.168.1.0怎么划子网?
+
+答案:如果不是划分子网，那么随意使用五个私有网络就可以了，如
+192.168.1.0/24
+192.168.2.0/24
+192.168.3.0/24
+192.168.4.0/24
+192.168.5.0/24
+
+如果一定要用192.168.1.0来划分子网，分析如下
+5个部门所以最少需要5个子网，那么你最少要划分大于5个的子网，所以使用192.168.1.0/27可以划分8个
+但这样划分后，每个子网的可用ip数为2^(32-27)-2=30个，人数最多的部门有35人，不够分
+如果一定要划，还是可以实现的，可以划出大小不等的子网
+
+你可以先划4个子网，拿其中一个做技术部门的子网
+192.168.1.0/26
+192.168.1.64/26
+192.168.1.128/26
+192.168.1.192/26
+
+再把另外三个其一，一分为二，比如:
+192.168.1.0/26
+192.168.1.64/26
+192.168.1.128/26
+192.168.1.192/27
+192.168.1.224/27
+
+
+
+
+
+
+
+
+
+==========================================================================================================
+
+防火墙(加杀毒)
+
+
+瑞星  卡巴斯基  360   金山    江民     腾讯管家	诺顿       天网   ......
+
+
+
+iptables	
+firewalld
+
+
+http://www.netfilter.org/
+
+netfilter / iptables   --iptables 的全名		2.4版本内核后都集成有这个组件
+
+
+
+=================================================================================================
+
+
+准备一台kvm虚拟机，恢复快照，安装下面的软件包，并启动服务
+
+# yum install iptables\*  	--只用本地yum源就ok
+
+
+# rpm -qa |grep iptables
+iptables-services-1.4.21-17.el7.x86_64
+iptables-devel-1.4.21-17.el7.x86_64
+iptables-1.4.21-17.el7.x86_64
+
+
+# systemctl start iptables.service
+# systemctl enable iptables.service
+# systemctl status iptables.service
+
+
+
+
+iptables  基本概念
+
+
+四张表：    表里有链  (chain )
+
+filter:  用来进行包过滤：  INPUT  OUTPUT FORWARD  
+nat:   用来网络地址转换：   network  address translation ,允许一个内网地址块，通过NAT转换成公网IP，实现对公网的访问，解决IP地址不足
+	PREROUTING  INPUT   POSTROUTING	OUTPUT
+
+mangle :用来对数据包标记	
+	 PREROUTING INPUT OUTPUT  FORWARD  POSTROUTING
+
+raw:对原始数据包的处理
+	PREROUTING	OUTPUT
+
+
+
+
+
+Incoming                 /     \         Outgoing
+       -->[Routing ]--->|FORWARD|------->
+          [Decision]     \_____/        ^
+               |                        |
+               |                      ____
+              ___                    /    \
+             /   \                  |OUTPUT|
+            |INPUT|                  \____/
+             \___/                      ^
+               |                        |
+                ----> Local Process ----
+
+ 
+
+
+iptables  
+	-A  增加一条规则，后接链名，默认是加到规则的最后面
+	-D  删除
+	-L  列出规则 
+	-n   以数值显示 
+	-I   在最前面插入规则 
+	-v   显示统计数据，与－L一起用，看到的信息更多
+
+
+	－F  清空规则
+	-z   清空计数器
+	-x   清空自定义链
+
+	－t   后接表名
+	-P   policy，默认策略
+	-p   protocol,后接协议名
+	--dport	 目标端口
+	--sport  源端口
+	-d  destination,目标地址
+	-s  source,源地址	
+	-i  接网卡接口， 进入的网卡接口
+	-o  接网卡接口， 出去的网卡接口
+	-j  后接动作
+
+	动作的分类：
+
+	ACCEPT    接收数据包
+	DROP	   丢弃数据包
+	REJECT   拒绝数据包，和DROP的区别就是REJECT会返回错误信息，DROP不会
+	MASQUEREAD  IP地址伪装，使用NAT转换成外网IP，可以PPP拔号（外网IP不固定情况）
+	SNAT   源地址转换，它与MASQUEREAD的区别是SNAT是接一个固定IP
+	DNAT	目标地址转换
+	LOG    记录日志
+
+
+
+例1，列规则
+
+	iptables -L 	--默认看的就是filter表
+	iptables  -t -L  filter
+
+	iptables -L -t  nat
+	iptables -L -t  mangle
+	iptables -L -t  raw
+
+
+# iptables -t filter -F
+# iptables -t nat -F
+# iptables -t mangle -F		--这三张表有些默认的规则，我们把规则都清掉
+
+
+例2,控制ping
+
+
+		10.1.1.0/24  －－－－－－－》    10.1.1.1
+		代表所有学员			教学机
+		ping 10.1.1.1		     拒绝源ip为10.1.1.0/24网段的人来ping本机
+
+			     《－－－－－－	
+
+
+
+
+10.1.1.0/24网段ping本机，会被拒绝（客户端会收到拒绝信息)
+# iptables -t filter -A INPUT -p icmp -s 10.1.1.0/24 -j REJECT
+# iptables -t filter -D INPUT -p icmp -s 10.1.1.0/24 -j REJECT	--删除上一条规则
+
+# iptables -t filter -A INPUT -p icmp -s 10.1.1.0/24 -j DROP
+# iptables -t filter -D INPUT -p icmp -s 10.1.1.0/24 -j DROP
+
+# iptables -t filter -A OUTPUT -p icmp -d 10.1.1.0/24 -j REJECT
+# iptables -t filter -D OUTPUT -p icmp -d 10.1.1.0/24 -j REJECT
+
+# iptables -t filter -A OUTPUT -p icmp -d 10.1.1.0/24 -j DROP
+# iptables -t filter -D OUTPUT -p icmp -d 10.1.1.0/24 -j DROP
+
+
+--上面四种方法都可以控制拒绝10.1.1.0/24网段ping本机
+
+
+# iptables -t filter -A INPUT -p icmp  -j REJECT  --如果不写-s或-d，默认代表所有人
+
+
+
+扩展
+我想实现所有人都ping不通我，但是10.1.1.X(X你自定义)这个IP能ping通我
+
+--提示:iptables的匹配规则:读取的顺序是从上往下一条一条匹配，匹配一条就不继续往下匹配，都没有匹配，则最后匹配默认策略
+
+# iptables -t filter -A INPUT -p icmp -j REJECT
+# iptables -t filter -A INPUT -p icmp -s 10.1.1.X -j ACCEPT
+--此写法错误的
+
+
+# iptables -t filter -A INPUT -p icmp -j REJECT
+# iptables -t filter -I INPUT -p icmp -s 10.1.1.X -j ACCEPT
+--正确写法，把第二条加到第一条前面
+
+
+# iptables -t filter -I INPUT 2 -p icmp -s 10.1.1.X -j ACCEPT
+--链后面接数字2，表示插入到原来第二条的上面，成为新的第2条
+
+
+删除的方法：
+	方法一：
+# iptables -t filter -D  INPUT -s 10.1.1.X  -p icmp -j ACCEPT
+		--加的时候怎么写，删除时就要怎么写  A 参数换成 D就可以
+	方法二;  
+# iptables -L -n  --line			
+# iptables  -D INPUT  2
+	--在规则比较多或者不好写规则的情况下，可以先用--line或者--line-number列出行号，再用行号删除
+
+
+	方法三：
+# iptables -F   
+	--直接清空filter表的所有规则
+
+iptables -X
+iptables -Z   --清除计数器，自定义链
+
+
+
+
+修改操作:
+# iptables -t filter -R INPUT 3 -p icmp -s 10.1.1.1 -j ACCEPT
+--把filter表INPUT链第三行，修改成上面的命令的内容
+
+
+
+
+例3，规则的保存与还原
+# iptables-save > /etc/sysconfig/iptables   --将当前规则保存到这个文件，文件可以自定义
+
+
+# iptables-restore < /etc/sysconfig/iptables --把保存的规则还原回去
+
+
+--/etc/sysconfig/iptables文件为默认保存文件，重启iptables服务会默认把此文件里的规则还原。当然也可以手工保存到另一个文件，就需要iptables-restore手工还原了。
+
+
+如果要永久保留此规则，则先iptables-save > /etc/sysconfig/iptables保存,再# systemctl enable iptables.service做成开机自动启动就可以了
+
+
+如果你想做成开机自动空规则（没有任何iptables策略)，你可以把/etc/sysconfig/iptables保存为空规则，然后systemctl enable iptables.service　
+
+
+
+
+例4，每个链的默认策略的修改
+# iptables -P INPUT DROP	--INPUT键默认策略改为DROP，改回来把DROP换成ACCEPT就行了
+# iptables -P OUTPUT DROP	--OUTPUT键默认策略改为DROP
+
+
+
+
+
+例5，实现允许ssh过来（代表本机为服务器身份），ssh出去（代表本机为客户端身份），别的任何访问都拒绝  （要求,INPUT和OUTPUT双链默认策略都为DROP）
+
+			三次握手，数据传输，四次挥手 （tcp/ip)
+			－－－－－－－－－－－－－》
+
+		client				server
+			
+			<－－－－－－－－－－－－－
+
+
+
+		10.1.1.1		10.1.1.2
+
+		  OUTPUT		INPUT
+		客户端 随机端口 －－－》  服务器  22
+		　　　(1024-65535)　	
+		客户端 随机端口 《－－－  服务器  22
+		  INPUT		        OUTPUT
+
+
+服务器端防火墙
+iptables -F
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+iptables -A INPUT -p tcp --dport 22 -s  10.1.1.1 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 22 -d 10.1.1.1 -j ACCEPT
+
+
+
+客户端防火墙
+iptables -F
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+iptables -A OUTPUT -p tcp --dport 22 -d 10.1.1.2 -j ACCEPT
+iptables -A INPUT -p tcp --sport 22  -s 10.1.1.2 -j ACCEPT
+
+
+
+
+加入下面两句就可以实现本地访问
+# iptables -A INPUT -i lo  -j ACCEPT
+# iptables -A OUTPUT -o lo  -j ACCEPT
+
+
+
+
+例6，
+把上面的例子基础上再加http服务(tcp的80端口)，怎么做?
+答案:和上面做法一样，把22换成80就ok了
+
+
+http tcp 80
+https tcp 443
+
+
+
+例7,
+在上面的基础上再加上允许别人访问本台服务器的DNS
+只需要做udp的53端口就可以了，不用写tcp 53（因为tcp 53主要是用于主从DNS服务器同步的）
+
+
+
+
+
+===========================================================================================================
+
+
+一些特殊的写法
+连续端口或多端口写法
+iptables -A INPUT -p tcp --dport 1:1000 -j ACCEPT
+iptables -A INPUT -p tcp -m multiport  --dport 25,110 -j ACCEPT
+
+硬件地址   
+iptables -A INPUT -m mac --mac-source 00:23:CD:95:DA:0B -p all  --dport 80 -j ACCEPT
+
+
+例8,
+samba
+139 445
+
+# iptables -A INPUT -p tcp -m multiport --dport 139,445  -j ACCEPT
+# iptables -A OUTPUT -p tcp -m multiport --sport 139,445  -j ACCEPT
+
+
+例9, 邮件服务器
+smtp 25  pop3 110  imap   143 
+smtps 465 pop3s 995  imaps 993
+
+
+
+		      －－－－－	公司邮件服务器－－－－－
+		　　　｜				　　｜
+		　　　｜				　　　 | 
+		张三(发信人)			李四(收信人)	
+		  zhangsan@qq.com		   lisi@qq.com
+
+
+
+		   网易邮件服务器 －－－－－－－－－－腾讯邮件服务器
+		　　　｜				　　｜
+		　　　｜				　　　 | 
+		张三(发信人)			李四(收信人)	
+		zhangsan@126.com		   lisi@qq.com
+
+
+
+# iptables -P INPUT DROP
+# iptables -P OUTPUT DROP
+# iptables -A INPUT -p tcp -m multiport --dport 25,110,143 -s 10.1.1.0/24 -j ACCEPT
+# iptables -A OUTPUT -p tcp -m multiport --sport 25,110,143 -d 10.1.1.0/24 -j ACCEPT
+
+
+
+例10	dhcp
+	iptables 对dhcp端口控制无效
+
+应用层
+表示层
+会话层 
+传输层
+网络层
+数据链路层
+物理层
+
+
+
+例11
+nfs
+
+--因为nfs用到rpc调用，端口不固定，所以需要把端口给固定起来.nis服务也会用到rpc调用，也需要做端口绑定
+
+
+vim /etc/sysconfig/nfs     --在此文件里加上下面四句
+LOCKD_TCPPORT=3000
+LOCKD_UDPPORT=3000
+MOUNTD_PORT=3001
+STATD_PORT=3002
+
+/etc/init.d/nfs restart
+/etc/init.d/rpcbind restart	--这里先把默认策略改成ACCEPT,再启动就可以启动起来，然后再把默认策略改回成DROP，再继续做下面的实验
+
+netstat -ntl |grep 300   去查看，看到rpc.的守护进程的端口为自己绑定的端口
+
+
+iptables -A INPUT -p tcp  --dport 3000:3002 -j ACCEPT
+iptables -A OUTPUT -p tcp  --sport 3000:3002 -j ACCEPT
+iptables -A INPUT -p udp  --dport 3000:3002 -j ACCEPT
+iptables -A OUTPUT -p udp  --sport 3000:3002 -j ACCEPT
+
+
+
+还要加上2049(nfs)和111(rpcbind)的端口的规则
+
+
+iptables -A  INPUT -p tcp  --dport 2049 -j ACCEPT
+iptables -A  OUTPUT -p tcp  --sport 2049 -j ACCEPT
+iptables -A  INPUT -p udp  --dport 2049 -j ACCEPT
+iptables -A  OUTPUT -p udp  --sport 2049 -j ACCEPT
+
+
+iptables -A  INPUT -p tcp  --dport 111 -j ACCEPT
+iptables -A  OUTPUT -p tcp  --sport 111 -j ACCEPT
+iptables -A  INPUT -p udp  --dport 111 -j ACCEPT
+iptables -A  OUTPUT -p udp  --sport 111 -j ACCEPT
+
+
+--现在就可以用另一台机showmount -e 查看并进行挂载了
+
+
+
+--练习：把上面的3000，3001，3002，2049，111合起来来做
+
+# iptables -A INPUT -p all -m multiport --dport 111,2049,3000,3001,3002 -j ACCEPT
+# iptables -A OUTPUT -p all -m multiport --sport 111,2049,3000,3001,3002 -j ACCEPT
+
+
+
+
+
+
+例11
+yum
+视你做的yum类型而定
+file
+ftp
+http
+
+
+例13
+mysql
+3306
+
+
+例14
+rsync
+873
+还加一个22
+
+
+
+例15
+vnc
+5900
+
+
+
+例16:
+telent
+23
+
+
+例17:
+tftp
+69
+
+
+例18:
+rsyslog远程日志　　tcp/udp  514	
+
+
+
+
+练习:
+
+ftp实现双链拒绝的情况下，客户端通过主动和被动都能访问进来
+
+服务器端准备:
+# yum install vsftpd -y
+
+# vim /etc/vsftpd/vsftpd.conf	--直接在配置文件最后加上这两句就可以
+pasv_min_port=3000
+pasv_max_port=3005
+
+# systemctl restart vsftpd
+# iptables -P INPUT DROP
+# iptables -P OUTPUT DROP
+
+客户端测试方法:
+1,命令连接测试，能成功连接上就表示命令端口连接没问题
+# ftp 10.1.1.2(服务器的ip)
+2,数据传输测试，用上面的命令登录成功后，在客户端使用passive指令转换你的主动和被动模式，
+(服务器端不用转换，因为服务器端默认就是主动和被动都支持的)
+然后使用ls指令能看到里面的pub子目录就表示数据传输OK了（因为默认是登录到服务器的/var/ftp/目录，里面有一个pub子目录)
+
+ftp有主动和被动的连接两种
+1，为什么有主动和被动两种连接方式呢?
+因为这是一种比较古老的设计方式，它是假设客户端用户有防火墙并且还不会配置防火墙的情况下，才设计出两种模式。
+防火墙默认只会拒绝进来的包，而不会拒绝出去或出去回来的包。
+2,一般用主动好还是被动好?
+用被动比较常见，（原因参考问题一）
+3，主动和被动在使用时的区别?
+没有防火墙，那么使用起来没什么区别，只是底层传输包的方式不一样
+有防火墙，那么防火墙的规则写法也不一样
+
+
+
+主动：
+		server			client
+
+	  20         21			n	m	
+			<-------------		
+						
+			-------------->
+
+	   ---------------------------------------->	
+
+	   <---------------------------------------
+
+iptables -A INPUT -p tcp --dport 21 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 21 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 20 -j ACCEPT
+iptables -A INPUT -p tcp --dport 20 -j ACCEPT
+
+
+
+
+被动：
+		server			client
+	随机端口	     21			n	m
+	3000－3005	 <---------------
+
+			---------------->
+			
+	 <--------------------------------------------	
+	    			
+	--------------------------------------------->
+
+iptables -A INPUT -p tcp --dport 21 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 21 -j ACCEPT
+iptables -A INPUT -p tcp --dport 3000:3005 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 3000:3005 -j ACCEPT
+
+
+
+==========================================================================================================
+
+
+先清空iptables规则
+# iptables -F
+# iptables -F -t nat 
+# iptables -F -t mangle
+# iptables -F -t raw
+
+# systemctl stop iptables
+# systemctl disable iptables
+
+
+
+
+rhel7和centos7的新防火墙软件　firewalld　　（但仍然可以使用iptables)	
+
+
+官网地址
+http://www.firewalld.org/
+
+
+
+
+# yum install firewalld firewall-config
+
+# systemctl restart firewalld	--启动服务
+# systemctl status firewalld    --确认状态
+# systemctl enable firewalld    --设为开机自动启动(可选)
+
+
+
+
+概念一:
+Zone  	简单来说就是防火墙方案,就是一套规则集，你可以切换使用哪一个zone
+
+# firewall-cmd --get-zones	--查看现在有哪些zone
+work drop internal external trusted home dmz public block
+
+
+drop：拒绝所有外部连接请求。
+block：拒绝所有外部连接(with an icmp-host-prohibited message for IPv4 and icmp6-adm-prohibited for IPv6)，允许内部发起的连接
+public：适用公共环境，拒绝所有外部连接请求，但指定外部连接可以进入
+external：特别适用路由器启用了伪装功能的外部网。拒绝所有外部连接请求，只能接收经过选择的连接。
+dmz：用于您的非军事区内的电脑，此区域内可公开访问，可以有限地进入您的内部网络，仅仅接收经过选择的连接。（受限制的公共连接可以进入）
+work：适用于工作网络环境，概念和workgoup一样，也是指定的外部连接允许用于工作区。
+home：类似家庭组,用于家庭网络。您可以基本信任网络内的其他计算机不会危害您的计算机。仅仅接收经过选择的连接
+internal：用于内部网络。您可以基本上信任网络内的其他计算机不会威胁您的计算机。仅仅接受经过选择的连接
+trusted：可接受所有的网络连接。（最不安全）
+
+
+# firewall-cmd --get-default-zone 　--查看当前使用的zone
+public
+
+# firewall-cmd --set-default-zone=work
+# firewall-cmd --set-default-zone=public	--修改当前使用的zone
+
+# firewall-cmd --list-all　--查看当前使用的zone的规则集
+# firewall-cmd --zone=work --list-all	--指定查看work这个zone的规则集
+
+
+概念二:
+网卡接口
+# firewall-cmd --zone=public --add-interface=eth0	--指定网卡加入到哪个zone
+
+# firewall-cmd --get-zone-of-interface=eth0		--查看网卡加入到哪个zone
+
+
+
+概念三:
+port,service  分别表示端口和服务
+# firewall-cmd  --add-port=80/tcp　　--允许tcp的80端口进来的通迅（类似iptables的INPUT)
+
+# firewall-cmd  --remove-port=80/tcp --删除上面的规则
+
+# firewall-cmd  --add-service=http	--允许http服务进来的通迅（不用管它是什么端口，只记住服务就好了)
+
+# firewall-cmd  --remove-service=http
+
+
+# firewall-cmd  --add-service=ftp	--允许ftp服务进来的通迅（无论主动还是被动都可以，这样就把iptables的写法简单化了)
+
+# firewall-cmd  --remove-service=ftp
+
+
+概念四:
+rich-rule复杂规则
+
+# firewall-cmd  --add-rich-rule="rule family="ipv4" source address=10.1.1.1 service name="ssh" accept"
+
+
+下面两条合起来实现允许所有人访问我的http,但drop掉10.1.1.1的访问我的http的包
+# firewall-cmd  --add-service=http	
+# firewall-cmd  --add-rich-rule="rule family="ipv4" source address=10.1.1.1 service name="http" drop"
+
+
+
+概念五:
+关于立即生效与永久生效的讨论
+
+上面加端口或加服务规则，是立即生效，但重启不生效（可以使用firewall-cmd --reload来装载保存的规则）
+
+# firewall-cmd  --permanent --add-service=ftp　　--加了一个--permanent参数后，立即不生效，需要reload后才能生效
+
+
+实际写规则时，建议直接写（不加--permanent参数)，所有规则写完，测试完成后，再使用# firewall-cmd --runtime-to-permanent全部转成permanent规则
+
+
+
+概念六:
+panic模式
+# firewall-cmd --panic-on
+# firewall-cmd --panic-off
+
+
+概念七:
+图形配置
+# firewall-config
+

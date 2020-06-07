@@ -1,0 +1,746 @@
+--
+
+
+基于状态的iptables（就是一个包过滤的条件）
+
+包过滤的条件:
+如: 
+-p 协议  
+-sport/dport xxx   
+-s/-d xxxx   
+-m state --state 状态
+
+
+如果按照tcp/ip来划分连接状态，有11种之多(课后可以自己去读一下相关知识)
+但iptables里只有4种状态；ESTABLISHED、NEW、RELATED及INVALID
+
+这两个分类是两个不相干的定义。例如在TCP/IP标准描述下UDP及ICMP数据包是没有连接状态的，但在state模块的描述下，任何数据包都有连接状态。
+
+
+    1、ESTABLISHED
+   
+    (1)与TCP数据包的关系：首先在防火墙主机上执行SSH Client，并且对网络上的SSH服务器提出服务请求，而这时送出的第一个数据包就是服务请求的数据包，如果这个数据包能够成功的穿越防火墙，那么接下来SSH Server与SSH Client之间的所有SSH数据包的状态都会是ESTABLISHED。
+
+    (2)与UDP数据包的关系：假设我们在防火墙主机上用firefox应用程序来浏览网页（通过域名方式），而浏览网页的动作需要DNS服务器的帮助才能完成，因此firefox会送出一个UDP数据包给DNS Server，以请求名称解析服务，如果这个数据包能够成功的穿越防火墙，那么接下来DNS Server与firefox之间的所有数据包的状态都会是ESTABLISHED。
+    (3)与ICMP数据包的关系：假设我们在防火墙主机ping指令来检测网络上的其他主机时，ping指令所送出的第一个ICMP数据包如果能够成功的穿越防火墙，那么接下来刚才ping的那个主机与防火墙主机之间的所有ICMP数据包的状态都会是ESTABLISHED。
+    由以上的解释可知，只要第一个数据包能够成功的穿越防火墙，那么之后的所有数据包（包含反向的所有数据包）状态都会是ESTABLISHED。
+
+    2、NEW
+   
+    首先我们知道，NEW与协议无关，其所指的是每一条连接中的第一个数据包，假如我们使用SSH client连接SSH server时，这条连接中的第一个数据包的状态就是NEW。
+
+    3、RELATED
+
+    RELATED状态的数据包是指被动产生的数据包。而且这个连接是不属于现在任何连接的。RELATED状态的数据包与协议无关，只要回应回来的数据包是因为本机送出一个数据包导致另一个连接的产生，而这一条新连接上的所有数据包都是属于RELATED状态的数据包。
+
+    4、INVALID
+
+    INVALID状态是指状态不明的数据包，也就是不属于以上三种状态的封包。凡是属于INVALID状态的数据包都视为恶意的数据包，因此所有INVALID状态的数据包都应丢弃掉，匹配INVALID状态的数据包的方法如下：
+    iptables -A INPUT -p all -m state INVALID -j DROP
+    我们应将INVALID状态的数据包放在第一条。
+
+
+					|
+			随机		|     80  web
+			－－－－－－－－－ ｜－－》		
+		client			|       server		
+		　　　　《－－－－－－－－－ |－－
+			随机		|     80	
+					|
+
+client访问server过去
+第一个数据包（new状态），如果拒绝，那么后续包都会被拒绝（因为后面来的都会是第一个，都为new状态)
+第一个数据包如果允许过去，那么后续包的状态为established
+
+
+
+server返回给client
+返回的所有包都为established
+
+
+
+例1：
+有下面两台机
+
+		10.1.1.2		10.1.1.3
+		 client			  server		
+
+
+
+10.1.1.2是可以ssh访问10.1.1.3，也可以elinks访问10.1.1.3
+
+1，在10.1.1.3上
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+这里就把双链都关掉，10.1.1.2任何访问都过不来了
+
+2，
+按以前的做法
+在10.1.1.3上允许别人ssh进来
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 22 -j ACCEPT
+在10.1.1.3上允许别人elinks进来
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 80 -j ACCEPT
+
+或者把上面四条合下面两条
+iptables -A INPUT -p tcp -m multiport  --dport 22,80 -j ACCEPT
+iptables -A OUTPUT -p tcp -m multiport  --sport 22,80 -j ACCEPT
+
+
+把上面的两条再换成
+iptables -A INPUT -p tcp -m multiport  --dport 22,80 -j ACCEPT
+iptables -A OUTPUT -p tcp -m state --state established -j ACCEPT
+(后面一句可以翻译成tcp协议的连接只要你进得来，你就回得去）
+(无论他是用哪个随机端口访问进来的;因为只要能进来，那么后续的包都属于ESTABLISHED状态)
+
+
+
+
+例2:
+有些服务器，可能希望客户端ping不通此服务器，但是此服务器可以ping通客户端(前提是客户端没有防火墙限制)
+
+方法一:
+在服务器上把/proc/sys/net/ipv4/icmp_echo_ignore_all的值改为1
+临时修改两种方式:
+
+echo 1 > /proc/sys/net/ipv4/icmp_echo_ignore_all
+
+sysctl -w net.ipv4.icmp_echo_ignore_all=1
+
+永久修改
+# vim /etc/sysctl.conf	--加上下面一句
+net.ipv4.icmp_echo_ignore_all = 1
+# sysctl -p	--使用此命令让其生效
+
+
+
+方法二:
+通过iptables的状态来实现
+有下面两台机
+
+10.1.1.2		10.1.1.3
+
+实现10.1.1.3这个IP能ping通所有人.但所有人不能ping通10.1.1.3
+
+					|
+		        --------------》|  ------->
+		  client		|  server		
+	     	 10.1.1.2		|  10.1.1.3
+		          <-------------|  <--------   
+
+
+				   NEW	   ESTABLISHED
+			INPUT	   拒绝	   允许
+			OUTPUT	   允许	   允许
+
+
+1，在10.1.1.3上
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+这里就把双链都关掉，10.1.1.2任何访问都过不来了
+
+
+2,在10.1.1.3上
+iptables -A INPUT -p icmp -m state --state ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -p icmp -m state --state NEW,ESTABLISHED -j ACCEPT
+
+--重点是INPUT那条不能允许NEW状态的;
+--注意第二步的第二条(也就是output这条)，如果只写了NEW状态，那么10.1.1.3ping所有人，都只能通第一个包；加上ESTABLISHED状态，所有包都能通	
+
+
+
+例3：
+有一个服务器，搭建了http,ftp(主动和被动都要支持,被动端口为3000-3005）两个服务（需要开放给所有人访问)，还要开放ssh和ping（但只开放给一个管理ip访问，比如此IP为10.1.1.X)，其它任何进来的访问都拒绝
+但此服务器要出去访问别的任何服务，自己的防火墙都要允许
+
+
+需求一个一个的写
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 80 -j ACCEPT
+
+iptables -A INPUT -p tcp --dport 21 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 21 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 20 -j ACCEPT
+iptables -A INPUT -p tcp --dport 20 -j ACCEPT
+
+iptables -A INPUT -p tcp --dport 3000:3005 -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 3000:3005 -j ACCEPT 
+
+iptables -A INPUT -p tcp --dport 22 -s 10.1.1.X -j ACCEPT
+iptables -A OUTPUT -p tcp --sport 22 -d 10.1.1.X -j ACCEPT
+
+iptables -A INPUT -p icmp -s 10.1.1.X -j ACCEPT
+iptables -A OUTPUT -p icmp -d 10.1.1.X -j ACCEPT
+
+iptables -A OUTPUT -p all -m state --state new,established,related -j ACCEPT
+iptables -A INPUT -p all -m state --state established,related -j ACCEPT
+
+
+需求综合起来写
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+
+iptables -A INPUT -p tcp -m mutliport --dport 80,21,20,3000,3001,3002,3003,3004,3005 -j ACCEPT
+
+iptables -A INPUT -p tcp --dport 22  -s 10.1.1.X -j ACCEPT
+
+iptables -A INPUT  -p icmp -s 10.1.1.X -j ACCEPT
+
+iptables -A OUTPUT -p all -m state --state new,established,related -j ACCEPT
+iptables -A INPUT -p all -m state --state established,related -j ACCEPT
+
+
+==============================================================================================================
+
+
+# 源A--B-->C目标
+
+
+
+		A		  B		
+
+			交换机
+
+
+		C		  D
+
+
+========================================================================================================
+
+
+
+路由
+什么是交换,什么是路由，什么是路由表？
+交换是指同网络访问（两台机器连在同一个交换机上，配置同网段的不同ip就可以直接通迅)
+路由就是跨网络访问(路径选择）
+路由表是记录路由信息的表（可以单路由表，也可以多路由表）
+
+
+			因特网　　　－－－》　　物联网(互联网+)
+  （无数个网络组成，所以从一个网络到另一个网络，中间可能还要经过很多个网络，必需要走路由)
+
+
+
+我们现在讨论的是单路由表，你在linux下用route -n查看
+
+
+
+# route -n
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+0.0.0.0         192.168.2.1     0.0.0.0         UG    0      0        0 br0
+10.1.1.0        0.0.0.0         255.255.255.0   U     0      0        0 br0
+169.254.0.0     0.0.0.0         255.255.0.0     U     1003   0        0 br0
+192.168.2.0     0.0.0.0         255.255.255.0   U     0      0        0 br0
+192.168.100.0   0.0.0.0         255.255.255.0   U     0      0        0 virbr1
+192.168.101.0   0.0.0.0         255.255.255.0   U     0      0        0 virbr2
+192.168.122.0   0.0.0.0         255.255.255.0   U     0      0        0 virbr0
+
+
+
+问题1:按上面的路由表来看，如果我ping一个公网IP（如ping 14.215.177.38)，应该怎么走?
+答案:
+我在本机访问一个IP，先看目标ip是否为本地ip，如果是，则直接访问本地;
+如果不是，则找路由表里是否有你访问的网段，有的话则从这个路由条目后面指定的网卡出去；
+如果路由表里没有你访问的网段，则会找默认路由（也就是网关）；
+如果网关也没有的话，则会报错网络不可达。
+
+
+问题2:为什么route -n能看到这几条路由（不同机器可能还不一样)
+答案:因为我对应的网卡有相关网段的ip，所以就会有对应的默认路由(比如我的机器br0网卡ip为10.1.1.1/24,所以我默认就会有10.1.1.0     0.0.0.0         255.255.255.0   U     0      0        0 br0　这一条路由）
+
+
+问题3:如何加网关和删除网关，加网关有什么要求?
+route add default gw  x.x.x.x	--临时加网关，马上生效
+route del default gw  x.x.x.x 	--临时删网关，马上生效
+
+永久加网关的方法
+在网卡配置文件里/etc/sysconfig/network-scripts/ifcfg-br0
+加一句GATEWAY=x.x.x.x;然后重启network服务生效
+
+
+加网关只能加你已经有的路由网段里的一个IP才行（ping不通此IP都可以）
+加网关不需要指定子网掩码（因为是已有的一个网段的ip，所以掩码已经确认了)
+
+
+问题4:如果你有br0:0这种子接口配置文件，那么每个文件里都要写一个网关吗？
+准确来说：一个路由表上可以加多个网关，但只有一个生效（从上往下找，上面的优先生效；rhel6上面的网关不管通不通，都不会找下面的网关;centos7测试结果为上面的网关不能通，则自动找下面的网关；上面的网关可以通，则只会找上面的网关）。
+但一台linux是可以做多路由表的，一个路由表一个有效网关，多路由表就是多个网关了。
+
+# route -n
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+0.0.0.0         10.1.1.150   	0.0.0.0         UG    0      0        0 br0
+0.0.0.0         10.1.1.254   	0.0.0.0         UG    0      0        0 br0
+169.254.0.0     0.0.0.0         255.255.0.0     U     1010   0        0 br0
+10.1.1.0        0.0.0.0         255.255.255.0   U     0      0        0 br0
+192.168.100.0   0.0.0.0         255.255.255.0   U     0      0        0 virbr1
+192.168.101.0   0.0.0.0         255.255.255.0   U     0      0        0 virbr2
+192.168.100.0   0.0.0.0         255.255.255.0   U     0      0        0 virbr0
+
+
+
+问题5:一台linux上如果有双物理网卡，请问可不可以两个网卡配置同网段的不同IP呢?
+假设我的	eth0 10.1.1.5/24		
+	eth1 10.1.1.6/24	
+
+10.1.1.0     0.0.0.0         255.255.255.0   U     0      0        0  eth0
+10.1.1.0     0.0.0.0         255.255.255.0   U     0      0        0  eth1
+
+
+如果两个网卡同网段，则会有下面两条路由
+10.1.1.0        0.0.0.0         255.255.255.0   U     0      0        0 eth0
+10.1.1.0        0.0.0.0         255.255.255.0   U     0      0        0 eth1
+
+它会实现从两张网卡进来的包，却从一张网卡出去，问题就产生了
+
+
+domain name--->IP---－>MAC
+	   dns    arp
+
+把ip比喻成 "张三的家"
+把MAC比喻成 "xx省xx市xx区xx街道xx小区xx单元xx室"
+
+
+实验:
+步骤一:
+一个虚拟机，开两个网卡，都为桥接网络,配置两个IP,如下
+# ip addr |grep eth 
+2: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 52:54:00:41:e4:22 brd ff:ff:ff:ff:ff:ff
+    inet 10.1.1.5/24 brd 10.1.1.255 scope global br0
+3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 52:54:00:39:c0:e6 brd ff:ff:ff:ff:ff:ff
+    inet 10.1.1.6/24 brd 10.1.1.255 scope global eth1
+
+步骤二:
+在另一台机器（我这里为宿主机,ip为10.1.1.1),分别ping上面两个ip,得到结果为两个人的MAC都为第一个网卡的
+# ip neigh |grep -E "^10.1.1.5 |^10.1.1.6 "
+10.1.1.5 dev br0 lladdr 52:54:00:41:e4:22 REACHABLE
+10.1.1.6 dev br0 lladdr 52:54:00:41:e4:22 REACHABLE
+
+
+--按arp协议的原理，找谁谁才会回应mac地址(找张三，只能张三回应；找李四，只能李四回应)。而上面的实验情况可以比喻成（张三，李四同一台机器，就是一家人，找张三，张三回，找李四，也张三回）
+
+
+步骤三:
+# vim /etc/sysctl.conf		--加上
+net.ipv4.conf.eth0.arp_ignore = 1		
+net.ipv4.conf.eth0.arp_announce = 2
+net.ipv4.conf.eth1.arp_ignore = 1		
+net.ipv4.conf.eth1.arp_announce = 2
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.all.arp_announce = 2
+
+# sysctl -p   --用此命令让其生效
+
+这几个参数的目的就是把上面的一家人（张三又回应张三也回应李四)的情况变成了原本的arp情况(张三只能回张三，李四只能回李四)
+
+
+
+最终的效果的是宿主机只能ping通10.1.1.5了，ping不通10.1.1.6了(这就对了，因为一台机器双网卡同网段会路由冲突）
+
+
+
+=====================================================================================================
+
+
+静态路由
+如下图的实验：
+IP分配如下（掩码假设全为24位）,做实验的话使用iptables -F把所有的防火墙规则清空
+1.1.1.0/24网段用default来模拟
+2.2.2.0/24网段用default1来模拟
+3.3.3.0/24网段用default2来模拟
+4.4.4.0/24网段用default3来模拟
+
+		
+
+
+VM1		  VM2		  	VM3		      VM4
+		 eth1(default1)	   eth0(default1)	 eth1(default3)
+    	        　 2.2.2.2 　　 《－－》    2.2.2.3		    4.4.4.4  
+	
+		 ip_forward          ip_forward
+
+eth0 (default）	 eth0(default)	  　eth1(default2)	 eth0(default2)
+1.1.1.1	  －－》	  1.1.1.2	      　3.3.3.3 	《－－	    3.3.3.4
+
+
+
+
+sip:1.1.1.1    dip:4.4.4.4
+返回
+sip:4.4.4.4    dip:1.1.1.1
+
+
+
+步骤一:
+从1.1.1.1 ping 1.1.1.2
+
+在宿主机上ping 1.1.1.2，能通
+
+步骤二:
+ping 2.2.2.2 不能通
+
+解决方法：
+在vm1上加网关
+route add default gw 1.1.1.2
+
+
+步骤三:
+在宿主机加了一个网关指向1.1.1.2的基础上，我再继续在宿主机上ping 2.2.2.3 不能通 
+解决方法：
+在vm3上加网关指向2.2.2.2
+route add default gw 2.2.2.2
+还要在VM2上打开ip_forward，打开方法有三种
+1，# echo 1 > /proc/sys/net/ipv4/ip_forward	--马上生效，但重启后就不生效了
+2，# sysctl -w net.ipv4.ip_forward=1		--马上生效，但重启后就不生效了
+3，# vim /etc/sysctl.conf	
+net.ipv4.ip_forward = 1		--加这一句到此配置文件里
+# sysctl -p			--保存后，使用此命令让它永久生效
+
+
+
+步骤四:
+继续ping 3.3.3.3	不通
+解决：再在VM2上route add default gw 2.2.2.3
+
+步骤五:
+继续ping 3.3.3.4    不通
+
+解决:在VM3上打开ip_forward
+还要在VM4上route add default gw 3.3.3.3
+
+步骤六
+继续ping 4.4.4.4  不通
+解决：如果在VM3上加一个网关指向3.3.3.4，其实是有问题的，因为VM3上这样就有两个网关了。如果你不使用多路由表的做法，这两个网关只能有一个网关有效。
+所以加网关的方式不可行，只能在VM3加路由
+route add -net 4.4.4.0 netmask 255.255.255.0 dev eth1
+
+
+上面终于从1.1.1.1ping到4.4.4.4
+
+
+
+
+那么如果还有5网段，6网段，7网段，甚至更多（类似因特网），全部靠指网关来通迅不现实。实际的做法就是使用路由协议（rip,ospf,bgp等)来做，这就是动态路由了。
+
+
+
+如果我把上面的所有网关和ip_forward去掉，然后手动加上路由（也就是说四台机都有四个网段的路由），那么就只能ping通到2.2.2.2，ping2.2.2.3就不通了
+
+
+linux下可以安装类似zebra这样的软路由软件，可以把linux模拟成一台cisco路由器来进行配置。
+
+
+
+
+
+
+========================================================================================================
+
+准备三台虚拟机做实验(把iptables都先关闭)；
+--注意:这里我没有用宿主机模拟中间的机器（因为用宿主机有多个子接口的情况下，在做firewalld测试的时候会有不稳定的情况；而且宿主机打开firewalld，那么就会默认拒绝vnc等，带来不方便)
+
+
+
+    A			      B				 C
+
+  内网(虚拟机)		 双网卡机器(虚拟机)	        外网(虚拟机)
+			
+192.168.100.128 －－》　	 192.168.100.2  eth1(default1)	
+ (default1) 
+			　　ip_forward		
+
+		           10.1.1.2	eth0 (br0) 　  《－－  10.1.1.3 (br0)
+							
+
+
+--注意：模拟上面的环境时，宿主机可以模拟中间的双网卡机器，但不能模拟内网或外网其中一台（原因是宿主机本来就是与虚拟的所有网段是直通的，你如果把它做为内网，则它会直接连接外网而不会走中间的网关）
+--所以两种模拟方法：1，宿主机模拟双网卡机器，两台虚拟机分别模拟内外网；2，不要宿主机，三台虚拟机来模拟，中间的双网卡网关使用一台双网关的虚拟机模拟，另两台用单网卡来模拟
+
+
+把gateway加上路由功能
+
+# echo "1" > /proc/sys/net/ipv4/ip_forward   --临时生效
+
+# vim /etc/sysctl.conf 
+net.ipv4.ip_forward = 1
+
+# sysctl -p    --改完后使用此命令，使之修改永久生效
+
+路由功能加了后，网关都指向了gateway这台物理机，那么  两个网段的这两台机就能互相ping通
+
+
+例一:禁止内网192.168.100.128和外网10.1.1.3互ping
+iptables -A FORWARD -p icmp -s 192.168.100.128 -j DROP
+或者
+iptables -A FORWARD -p icmp -s 10.1.1.3 -j DROP
+
+
+
+例二:禁止内网192.168.100.128上外网的10.1.1.3这个网站
+iptables -A FORWARD -p tcp --dport 80 -s 192.168.100.128 -d 10.1.1.3 -j DROP
+
+
+
+===========================================================================================================
+
+
+
+
+问题：这里我们模拟内外网的访问，网关互指，中间双网卡机器打开ip_forward，但实际的网络访问环境中，外网客户会把网关指向你公司的网关吗？
+
+张三			　　      　李四				　  王五
+
+  内网用户			 双网卡机器			 外网服务器
+			　 （其实就是模拟一个路由器)
+192.168.100.128    －－－－＞  192.168.100.2   eth1	
+	       	   网关指向	
+			 	 打开ip_forward			
+
+	        	      10.1.1.2       eth0                10.1.1.3
+
+				NAT(network address tranlation)
+不做NAT的过程
+SIP:192.168.100.128  DIP:10.1.1.3
+通过网关到达路由器
+SIP:192.168.100.128  DIP:10.1.1.3
+到达外网服务器，返回
+SIP:10.1.1.3	     DIP:192.168.100.128    --这一步回不来
+
+
+做SNAT的过程
+SIP:192.168.100.128  DIP:10.1.1.3
+通过网关到达路由器,做SNAT
+SIP:10.1.1.2	     DIP:10.1.1.3
+到达外网服务器，返回
+SIP:10.1.1.3	     DIP:10.1.1.2
+回到路由器，自动DNAT
+SIP:10.1.1.3	     DIP:192.168.100.128
+
+
+张三		李四			王五
+发信人:张三	发信人:李四		发信人:王五	
+收信人:王五 --->	收信人:王五  -----------> 收信人:李四
+			   		   |
+		发信人:王五		   |
+	 <-----	收信人:张三  <---------------|	
+
+
+
+
+解决方法:在中间网关机器上写规则
+实现内网可以上外网的web
+iptables -t nat -A POSTROUTING -p tcp --dport 80 -o eth0  -j SNAT --to-source 10.1.1.2
+实现内网可以ping外网
+iptables -t nat -A POSTROUTING -p icmp -o eth0 -j SNAT --to-source 10.1.1.2
+
+
+下面这条不写协议，也就表示所有内网上外网的都会做SNAT成10.1.1.1这个IP地址
+iptables -t nat -A POSTROUTING  -o eth0 -j SNAT --to-source 10.1.1.2
+
+iptables -t nat -A POSTROUTING  -o eth0 -j MASQUERADE	--这条命令和上条命令实现的效果是一样的，但区别在于MASQUERADE可以动态SNAT成你的公网IP（用于公网IP不固定的情况，比如家用的ADSL拔号上网）
+
+
+做了SNAT后，并且可以10.1.1.3的/var/log/httpd/access_log里验证得到：在你做NAT之前，靠双网关互指访问网站，它的访问日志里全是你内网的IP。而做了NAT之后，日志里是你公网的IP。
+
+
+centos7下的做法(这个做法经测试可能不太稳定，如果我中间的机器用宿主机模拟，并且br0有子接口的时候，这样做有些时候不能成功。所以可以换成三台虚拟机做就没发现这个问题）
+# firewall-cmd --add-masquerade		(不用指从哪个网卡出了）  
+
+# firewall-cmd --remove-masquerade
+
+
+
+题目1
+你的笔记本为windows,虚拟机为linux
+请问怎么让linux上网？
+场景一：
+有路由器：虚拟机直接用桥接网络，然后和windows一样配置ip,gateway,dns就可以了
+场景二:
+没有路由器，只能播号上网：
+windows播号，linux使用NAT网络类型
+
+
+
+
+
+
+题目2：
+现在我的192.168.2.9(网段为192.168.2.0/24)是通过公司路由器192.168.2.1可以实际上外网的
+请问，我一个kvm的isolated网段（假设为default1,也就是virbr1这个网卡)的虚拟机192.168.100.128如何才能通过NAT上外网
+
+
+
+kvm虚拟机		     宿主机	                    公司路由器  	 公司外网IP
+		      virbr1      	br0	   			
+192.168.100.128 －－》 192.168.100.1   192.168.2.9 －－>  192.168.2.1   219.133.159.218
+
+
+
+elinks www.qq.com
+
+DNS指向114.114.114.114
+dns包的过程
+SIP:192.168.100.128	DIP:114.114.114.114
+通过网关192.168.100.1到达宿主机,做SNAT
+SIP:192.168.2.9  	DIP:114.114.114.114
+通过网关172.16.254.254到达公司路由器,做SNAT
+SIP:219.133.159.218	DIP:114.114.114.114
+到达DNS服务器，解析成功后，返回结果
+SIP:114.114.114.114	DIP:219.133.159.218
+回到公司路由器，自动DNAT
+SIP:114.114.114.114	DIP:192.168.2.9
+回到宿主机，自动DNAT
+SIP:114.114.114.114	DIP:192.168.100.128	   
+
+
+总结：
+满足四个条件，这个hostonly虚拟机就可以上外网
+1，虚拟机网关指向宿主机的同网段IP（我这个例子里是指向192.168.100.1）
+2，DNS指向公网DNS服务器（我这里是指向114.114.114.114）;这里DNS也可以指向192.168.100.1，但是要在宿主机上多做一条DNAT，把udp的53端口目标地址DNAT成114.114.114.114
+3,宿主机打开ip_forward（因为写NAT规则都需要这个要求）
+4，宿主机上写一条SNAT把虚拟机上网的所有数据包SNAT成宿主机上外网的IP（我这里为192.168.2.9)
+iptables -t nat -A POSTROUTING -o br0 -j SNAT --to-source 192.168.2.9
+或者
+iptables -t nat -A POSTROUTING -o br0 -j MASQUERADE
+
+
+
+=====================================================================================================
+
+
+					       client
+
+
+
+					      公网ip	
+					   firewalld 
+
+
+				web   dns   ftp   mail  xxxxx
+
+
+
+
+
+DNAT  目的地址转换
+	也就是外网是客户端，要访问我们内网的服务器，客户端只是访问外网IP，内网里不同的服务器不同的IP，可以使用DNAT把不同的请求转换到不同的内网服务器
+
+  内网web服务器			     双网卡机器		　　　　　外网客户
+			　 （其实就是模拟一个路由器)
+192.168.100.128    －－－－＞  192.168.100.2   eth1	
+	       	   网关指向	
+			 	 打开ip_forward			
+
+	        	      10.1.1.2       eth0    　            10.1.1.3
+
+
+SIP:10.1.1.3	  	  DIP:10.1.1.2
+到达双网卡网关，要做DNAT
+SIP:10.1.1.3	  	  DIP:192.168.100.128
+到达web服务器，返回
+SIP:192.168.100.128　	  DIP:10.1.1.3
+通过web服务器网关192.168.100.1回到双网卡网关机器，自动SNAT回去
+SIP:10.1.1.2　　	　 DIP:10.1.1.3
+
+
+iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j DNAT --to-destination 192.168.100.128
+
+
+
+centos7的dnat写法
+# firewall-cmd --add-forward-port=port=80:proto=tcp:toaddr=192.168.100.128	--tcp的80端口，全部dnat给192.168.100.128这个ip
+
+
+测试方法:在外网客户端上elinks -dump 10.1.1.2测试
+
+
+
+=================================================================================
+
+
+
+
+NPT 网络端口转换
+(DNPT)
+
+
+			客户端	10.1.1.2
+			 |
+      			 |
+			web	10.1.1.3
+
+
+
+默认情况web是监听80端口，如果我把web改成监听8080.那么客户端在elinks 10.1.1.3时就访问不到，除非elinks 10.1.1.3:8080
+
+在web服务器上写上一条端口转换的iptables规则，把访问80的转成8080.然后客户端再去elinks 10.1.1.3不用写端口也可以访问成功
+# iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 8080
+
+
+--注意:前面的snat,dnat,npt写的--to-source,--to-destination,--to-port全部可以简写成--to就好了;只要做写nat规则，就需要打开ip_forward(npt不需要打开)
+
+
+centos7下端口80转成8080
+# firewall-cmd --add-forward-port=port=80:proto=tcp:toport=8080
+success
+
+
+
+
+
+=============================================================================================
+
+DNAT+DNPT
+
+
+ 内网web服务器(8000端口）		双网卡机器		　　　　　外网客户
+			　 （其实就是模拟一个路由器)
+192.168.100.128    －－－－＞  192.168.100.2   eth1	
+	       	   网关指向	
+			 	 打开ip_forward			
+
+	        	      10.1.1.2       eth0    　            10.1.1.3
+
+方法一:
+在中间的双网卡机器上做DNAT
+# iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j DNAT --to-destination 192.168.100.128
+在内网web服务器上做DNPT
+# iptables -t nat -A PREROUTING -p tcp --dport 80 -i eth0 -j REDIRECT --to 8000
+
+方法二:
+# firewall-cmd --add-forward-port=port=80:proto=tcp:toaddr=192.168.100.128:toport=8000
+
+
+===============================================================================================
+
+
+题目:
+要求:写出这个电信用户访问到双线web服务器时并返回的IP变化过程(只写源IP,目标IP,和做SNAT还是DNAT等)
+你觉得架构会不会有问题?
+
+192.168.100.100				       192.168.2.100
+		电信用户        网通用户
+		  | 		  |	
+192.168.100.1	  |		  | 	       192.168.2.1
+    	电信用户家里路由器  网通用户家里路由器 	
+51.1.2.3	  ｜		 ｜		61.1.2.3
+		  ｜www.abc.com	 ｜ 				
+		  ｜ 	  	 ｜
+71.1.2.3          |		  |		81.1.2.3
+	     公司电信路由器   公司网通路由器
+10.1.1.1	  |	          |		172.16.21.1
+		  ｜		 ｜
+		  ｜		 ｜ 
+10.1.1.100     eth0 双线web服务器 eth1		172.16.21.100
+
+
+这里应该有智能DNS（DNS服务器会通过SIP是电信还是网通，来智能的解析同一个网站的DIP；在此例中，电信用户会被解析访问71.1.2.3，网通用户会被解析访问81.1.2.3）
+
+sip:192.168.100.100	dip:71.1.2.3 

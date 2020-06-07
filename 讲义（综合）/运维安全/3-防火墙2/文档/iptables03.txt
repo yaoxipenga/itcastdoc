@@ -1,0 +1,385 @@
+--
+
+
+
+
+			      家用网络拓朴图
+
+				internet
+				   |
+				   |
+				  家里的接口
+				   |
+				   |		
+				 modem 调制解调器 (转信号)
+				   |
+				   |
+				　路由器（拔号,dhcp，nat共享上网，网络控制等)	
+				   |
+				   |
+			|－－－－－－－－－－－－－｜
+		      交换机			交换机
+			|			|
+		|-------------|		|-------------|
+		pc1	     pc2	pc3	     pc4
+
+
+=====================================================================================================
+
+
+tcpdump			
+
+	tcpdump - dump traffic on a network
+
+
+	参数的分类：
+	协议 tcp udp arp icmp
+	数据内容 端口，Ip  ：  
+		src port 80	--源
+		dst port 22	--目标
+
+	tcpdump tcp dst port 80 -n
+	tcpdump -i eth1 tcp dst port 80 -n   --小写i参数指定哪个网卡
+	
+	tcpdump tcp dst port 80 -n -w tcpdump.txt  --把dump出来的信息保存到tcpdump.txt文件
+	tcpdump -r tcpdump.txt --然后需要使用tcpdump -r去读取
+
+
+	关系参数 ：  !   and   or
+
+	tcpdump tcp dst port 80 -n and src 10.2.2.4
+	tcpdump tcp dst port 80 -n and ! src 10.2.2.4
+	tcpdump tcp dst port 80 -n and  host  10.2.2.4
+
+
+	-vv <---把数据包的详细内容都记录下来
+	-w <---把数据保存到某个文件
+
+======================================================================
+	练习：
+捕捉所有访问本机ftp服务器的连接，并且数据包是来自10.2.2.4
+tcpdump tcp dst port 21 and src 10.2.2.4 -n
+
+
+捕捉所有来自10.2.2.1的arp协议的数据包，并且捕捉的显示要求输出以太网数据帧的信息 -e	
+tcpdump arp and src 10.2.2.1 -n -e
+
+
+捕捉所有本机web服务回应10.2.2.4的数据包
+tcpdump tcp src port 80 and dst 10.2.2.4
+
+
+
+图形的抓包工具:wireshark
+
+yum install wireshark*
+
+
+
+
+======================================================================================
+
+
+linux 高级路由  策略路由
+
+   
+lartc(linux advanced routing and traffic control)
+
+
+http://www.lartc.org
+
+
+# rpm -qa |grep iproute		--iproute工具包软件
+iproute-3.10.0-74.el7.x86_64
+
+
+ip命令就属于iproute软件包
+
+ip addr
+ip neigh
+ip rule
+ip route
+ip tunnel
+
+
+=============================================================
+
+
+
+# ip rule list
+0:	from all lookup local 
+32766:	from all lookup main 
+32767:	from all lookup default
+
+
+
+# cat /etc/iproute2/rt_tables	
+#
+# reserved values
+#
+255	local
+254	main
+253	default
+0	unspec
+#
+# local
+#
+#1	inr.ruhep
+
+
+
+# ip route list/show table local/255
+# ip route list/show table main/254
+# ip route list/show table default/253
+
+
+
+============================================================================================================
+
+
+
+		50　内网用户    －－－－－－－－－－》路由器1－－》 猫1  （快网络）
+			
+
+			   		    
+		50　内网用户　　－－－－－－－－－--》路由器2 －－》猫2  （慢网络）
+
+
+
+
+
+
+应用实例1：				   
+			    －－－－－－－－－－》路由器1－－》 猫1  （快网络）
+			    |	
+			    |	
+	100  内网用户  －－－>linux路由
+			    ｜	
+			    ｜		    
+			     －－－－－－－－－》路由器2 －－》 猫2  （慢网络）
+
+
+
+linux路由器有两条上网线路，一个快，一个慢
+有这样的需求:内网用户需要给钱共享上网，有人给钱多，需要快线路，有人给钱少，需要快线路，这样的话，我们就可以使用策略路由了
+
+
+
+
+模拟的话使用下面的图(四台虚拟机，三个网络):
+
+
+
+						10.1.1.3
+			    －－－－－－－－－－》VM2(br0桥接网络)    　	线路一
+			    |	
+192.168.100.128	    	    |		10.1.1.2  	eth0	
+ VM1(default1网络)－－－－linux路由	192.168.100.2   eth1           公网
+			    ｜		192.168.101.2   eth2    
+			    ｜
+			     －－－－－－－－－》VM3 (default2网络)		线路二
+					    192.168.101.128 
+
+
+
+上图架构中：
+1.把VM1网关指向192.168.100.2
+2,把linux路由器的网关指向10.1.1.3
+3.linux路由打开ip_forward
+4,这四台的iptables都关闭
+
+
+先测试：在VM1上ping一个外网IP(如 ping 8.8.8.8)，这个时候在VM2和VM3上抓包，但只能在VM2上抓到相关的包，表示数据包从VM2出去
+# tcpdump -i eth0  icmp and src 192.168.100.128
+
+然后通过下面的策略让VM1ping的包从VM3出去
+
+
+下面就是在linux路由上进行操作来实现:
+
+
+操作命令:
+echo 200 t1 >> /etc/iproute2/rt_tables
+ip rule add from 192.168.100.128  table t1  
+ip route add default via 192.168.101.128 dev eth2 table t1
+ip route flush cache
+
+
+--如果加错了规则,想删掉,就使用ip rule del table t1删除规则，再ip route del default via 192.168.101.128 dev eth2 table t1删除t1路由表的网关
+
+
+操作完后，测试
+1，在内网ping 8.8.8.8
+2,在两个模拟外网路由器的机器上抓包
+# tcpdump -i eth0  icmp and src 192.168.100.128
+3，结果这次只能在VM3上抓到包，OK
+
+
+
+
+应用实例2:
+
+						10.1.1.3
+			    －－－－－－－－－－》VM2(br0桥接网络)    　	线路一
+			    |	
+192.168.100.128	    	    |		10.1.1.2  	eth0	
+ VM1(default1网络)－－－－linux路由	192.168.100.2   eth1           公网
+			    ｜		192.168.101.2   eth2    
+			    ｜
+			     －－－－－－－－－》VM3 (default2网络)		线路二
+					    192.168.101.128 
+
+
+要实现不同类型的包走不同的线路：如80的访问走一条线，其它的走另外一条线路
+实现不同类型的包的策略路由，就要借助于iptables的mangle表的set mark功能
+
+
+
+1，在linux路由器上使用策略路由实现
+
+
+# iptables -t mangle -A PREROUTING -i eth1 -p tcp --dport 80 -j MARK --set-mark 1		--把从内网进来要出去的80的包打标记为1
+
+
+# echo 100 http.out >> /etc/iproute2/rt_tables	--建一张叫http.out的表，表编号100
+
+# ip rule add fwmark 1 table http.out pref 20000  --指定打了标记为1的所有包都走http.out这张路由表，并指定优先级为20000
+# ip route add default via 192.168.101.128 dev eth2 table http.out  --指定http.out表从virbr2出去找192.168.101.128
+# ip route flush cache		--刷新路由缓存
+
+
+
+
+2，测试
+测试一:在内网192.168.100.128客户端上
+elinks 8.8.8.8
+
+在模拟两个线路的机器上都执行下面的命令
+tcpdump -i eth0 tcp port 80
+--只有线路二上能抓到包，OK
+
+
+测试二:在内网192.168.100.128客户端上
+ping 8.8.8.8
+
+在模拟两个线路的机器上都执行下面的命令
+tcpdump -i eth0  icmp
+--只有线路一上能抓到包，OK
+
+
+--从上面就可以看到出去的80端口的包和其它的包走的路线不一致
+
+
+
+iptables的mangle表打标记的应用举例:
+1,刚讲的例二
+2,iptables的mangle打标记+tc做流量控制（这个课程不讨论，有兴趣上网去搜)
+3,iptables的mangle打标记+LVS做负载均衡
+
+
+==========================================================================================================
+
+
+问题：
+
+要求:写出这个电信用户访问到双线web服务器时的IP变化过程(只写源IP,目标IP,和做SNAT还是DNAT等)
+你觉得有没有问题?
+
+
+192.168.100.100				       192.168.2.100
+		电信用户        网通用户
+		  | 		  |	
+192.168.100.1	  |		  | 	       192.168.2.1
+    	电信用户家里路由器     网通用户家里路由器 	
+51.1.2.3	  ｜		 ｜		61.1.2.3
+		  ｜ www.abc.com ｜ 				
+		  ｜	  	 ｜
+71.1.2.3          |		  |		81.1.2.3
+	     机房电信路由器   机房网通路由器
+10.1.1.1	  |	          |		172.16.2.1
+		  ｜		 ｜
+		  ｜		 ｜ 
+10.1.1.100     eth0 双线web服务器 eth1		172.16.2.100
+
+
+
+SIP:192.168.100.100	DIP:71.1.2.3
+通过网关192.168.100.1到达电信家用路由器，做SNAT
+SIP:51.1.2.3		DIP:71.1.2.3
+通过公网到达机房电信路由器，做DNAT
+SIP:51.1.2.3		DIP:10.1.1.100
+到达双线web服务器，返回
+SIP:10.1.1.100 		DIP:51.1.2.3
+通过网关10.1.1.1，回到机房电信路由器，自动SNAT
+SIP:71.1.2.3		DIP:51.1.2.3
+通过公网回到电信家用路由器，自动DNAT
+SIP:71.1.2.3		DIP:192.168.100.100
+
+
+
+实验环境:
+
+精简一点可以使用下面的四台虚拟来做,并且要注意宿主机(真实机)不能在这里扮演角色,因为宿主机和任何虚拟机都是可以直接通的
+下图中,电信客户端和网通客户端就没有使用去模拟路由器NAT,直接用一台虚拟机用两个网卡来模拟两个角色
+
+
+
+
+10.1.1.2         br0   客户端     virbr1		192.168.100.129
+		  ｜		  ｜
+		  ｜		  ｜ 				
+		  ｜	  	  ｜
+10.1.1.3	  br0		 virbr1		192.168.100.128
+	     机房电信路由器1	  机房网通路由器2
+192.168.101.128	 virbr2	 	 virbr3		192.168.102.128
+		  ｜		  ｜
+		  ｜		  ｜ 
+192.168.101.129	 virbr2 双线服务器 virbr3 	192.168.102.129
+
+
+
+
+
+准备好上图架构的ip后
+第一步:
+在双线web服务器安装并启动httpd,做一个主页方便测试
+# yum install httpd httpd-devel
+# echo "main page" > /var/www/html/index.html
+# systemctl start httpd
+
+
+第二步:
+
+电信路由器上做dnat(还要打开ip_forward) 
+# systemctl restart firewalld.service
+# firewall-cmd --add-forward-port=port=80:proto=tcp:toaddr=192.168.101.129
+
+网通路由器上做dnat(还要打开ip_forward) 
+# systemctl restart firewalld.service
+# firewall-cmd --add-forward-port=port=80:proto=tcp:toaddr=192.168.102.129
+
+
+
+
+第三步:
+在双线web服务器上使用策略路由实现
+
+# ip rule
+0:	from all lookup local 
+32766:	from all lookup main 
+32767:	from all lookup default 
+
+
+# echo 100 dianxin >> /etc/iproute2/rt_tables 
+# echo 200 wangtong >> /etc/iproute2/rt_tables 
+
+# ip rule add from 192.168.101.129 table dianxin
+# ip rule add from 192.168.102.129 table wangtong
+
+# ip route add default via 192.168.101.128 table dianxin
+# ip route add default via 192.168.102.128 table wangtong
+
+
+第四步:
+客户端elinks测试，两个线路都ok
+
