@@ -190,6 +190,8 @@ gpgcheck=0
 
 
 ## 1, 安装zabbix服务器端软件
+rpm -Uvh https://repo.zabbix.com/zabbix/4.0/rhel/7/x86_64/zabbix-release-4.0-2.el7.noarch.rpm
+yum clean all
 
 ~~~powershell
 [root@server ~]# yum install zabbix-server-mysql zabbix-web-mysql mariadb-server
